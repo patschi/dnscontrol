@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/StackExchange/dnscontrol/models"
-	"github.com/StackExchange/dnscontrol/providers"
+	"github.com/StackExchange/dnscontrol/v3/models"
+	"github.com/StackExchange/dnscontrol/v3/providers"
 
 	opensrs "github.com/philhug/opensrs-go/opensrs"
 )
@@ -17,6 +17,7 @@ var docNotes = providers.DocumentationNotes{
 	providers.DocCreateDomains:       providers.Cannot(),
 	providers.DocOfficiallySupported: providers.Cannot(),
 	providers.CanUseTLSA:             providers.Cannot(),
+	providers.CanGetZones:            providers.Unimplemented(),
 }
 
 func init() {
@@ -29,6 +30,7 @@ var defaultNameServerNames = []string{
 	"ns3.systemdns.com",
 }
 
+// OpenSRSApi is the api handle.
 type OpenSRSApi struct {
 	UserName string // reseller user name
 	ApiKey   string // API Key
@@ -37,10 +39,12 @@ type OpenSRSApi struct {
 	client  *opensrs.Client // Client
 }
 
+// GetNameservers returns a list of nameservers.
 func (c *OpenSRSApi) GetNameservers(domainName string) ([]*models.Nameserver, error) {
-	return models.StringsToNameservers(defaultNameServerNames), nil
+	return models.ToNameservers(defaultNameServerNames)
 }
 
+// GetRegistrarCorrections returns a list of corrections for a registrar.
 func (c *OpenSRSApi) GetRegistrarCorrections(dc *models.DomainConfig) ([]*models.Correction, error) {
 	corrections := []*models.Correction{}
 
@@ -94,9 +98,8 @@ func (c *OpenSRSApi) getNameservers(domainName string) ([]string, error) {
 			return nil, err
 		}
 		return dom.Attributes.NameserverList.ToString(), nil
-	} else {
-		return nil, errors.New("Domain is locked")
 	}
+	return nil, errors.New("Domain is locked")
 }
 
 // Returns a function that can be invoked to change the delegation of the domain to the given name server names.
@@ -123,12 +126,12 @@ func newProvider(m map[string]string, metadata json.RawMessage) (*OpenSRSApi, er
 	api.ApiKey = m["apikey"]
 
 	if api.ApiKey == "" {
-		return nil, fmt.Errorf("OpenSRS apikey must be provided.")
+		return nil, fmt.Errorf("openSRS apikey must be provided")
 	}
 
 	api.UserName = m["username"]
 	if api.UserName == "" {
-		return nil, fmt.Errorf("OpenSRS username key must be provided.")
+		return nil, fmt.Errorf("openSRS username key must be provided")
 	}
 
 	if m["baseurl"] != "" {

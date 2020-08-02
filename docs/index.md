@@ -1,13 +1,13 @@
 ---
 layout: default
-title: DnsControl
+title: DNSControl
 ---
 
 <div class="row jumbotron">
 	<div class="col-md-12">
 		<div>
-			<h1 class="hometitle">DnsControl</h1>
-			<p class="lead">DnsControl is an <strong><a href="opinions">opinionated</a></strong> platform for seamlessly managing your DNS configuration across any number of DNS hosts, both in the cloud or in your own infrastructure. It manages all of the domains for the Stack Overflow network, and can do the same for you!</p>
+			<h1 class="hometitle">DNSControl</h1>
+			<p class="lead">DNSControl is an <strong><a href="opinions">opinionated</a></strong> platform for seamlessly managing your DNS configuration across any number of DNS hosts, both in the cloud or in your own infrastructure. It manages all of the domains for the Stack Overflow network, and can do the same for you!</p>
 		</div>
 	</div>
 </div>
@@ -114,7 +114,10 @@ title: DnsControl
 					<a href="{{site.github.url}}/spf-optimizer">SPF Optimizer</a>: Optimize your SPF records
 				</li>
 				<li>
-					<a href="{{site.github.url}}/caa-builder"CAA Builder</a>: Build CAA records the easy way
+					<a href="{{site.github.url}}/caa-builder">CAA Builder</a>: Build CAA records the easy way
+				</li>
+				<li>
+					<a href="{{site.github.url}}/get-certs">Let's Encrypt</a>: Renew your SSL/TLS certs
 				</li>
 			</ul>
 		</div>
@@ -162,6 +165,9 @@ title: DnsControl
 				</li>
 				<li>
 					<a href="{{site.github.url}}/release-engineering">Release Engineering</a>: How to build and ship a release
+				</li>
+				<li>
+					<a href="{{site.github.url}}/bug-triage">Bug Triage</a>: How bugs are triaged
 				</li>
 			</ul>
 		</div>

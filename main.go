@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/StackExchange/dnscontrol/commands"
-	_ "github.com/StackExchange/dnscontrol/providers/_all"
+	"github.com/StackExchange/dnscontrol/v3/commands"
+	_ "github.com/StackExchange/dnscontrol/v3/providers/_all"
 )
 
 //go:generate go run build/generate/generate.go build/generate/featureMatrix.go
@@ -18,13 +18,13 @@ func main() {
 	os.Exit(commands.Run(versionString()))
 }
 
-// Version management. 2 Goals:
+// Version management. Goals:
 // 1. Someone who just does "go get" has at least some information.
 // 2. If built with build/build.go, more specific build information gets put in.
 // Update the number here manually each release, so at least we have a range for go-get people.
 var (
 	SHA       = ""
-	Version   = "0.3.0"
+	Version   = "3.2.0"
 	BuildTime = ""
 )
 

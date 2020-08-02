@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/miekg/dns"
-	"github.com/pkg/errors"
 )
 
 /* .Target is kind of a mess.
@@ -39,7 +38,7 @@ func (rc *RecordConfig) GetTargetField() string {
 // GetTargetIP returns the net.IP stored in Target.
 func (rc *RecordConfig) GetTargetIP() net.IP {
 	if rc.Type != "A" && rc.Type != "AAAA" {
-		panic(errors.Errorf("GetTargetIP called on an inappropriate rtype (%s)", rc.Type))
+		panic(fmt.Errorf("GetTargetIP called on an inappropriate rtype (%s)", rc.Type))
 	}
 	return net.ParseIP(rc.Target)
 }
@@ -47,9 +46,21 @@ func (rc *RecordConfig) GetTargetIP() net.IP {
 // GetTargetCombined returns a string with the various fields combined.
 // For example, an MX record might output `10 mx10.example.tld`.
 func (rc *RecordConfig) GetTargetCombined() string {
-	// If this is a pseudo record, just return the target.
+	// Pseudo records:
 	if _, ok := dns.StringToType[rc.Type]; !ok {
-		return rc.Target
+		switch rc.Type { // #rtype_variations
+		case "R53_ALIAS":
+			// Differentiate between multiple R53_ALIASs on the same label.
+			return fmt.Sprintf("%s atype=%s zone_id=%s", rc.Target, rc.R53Alias["type"], rc.R53Alias["zone_id"])
+		case "AZURE_ALIAS":
+			// Differentiate between multiple AZURE_ALIASs on the same label.
+			return fmt.Sprintf("%s atype=%s", rc.Target, rc.AzureAlias["type"])
+		case "SOA":
+			return fmt.Sprintf("%s %v %d %d %d %d %d", rc.Target, rc.SoaMbox, rc.SoaSerial, rc.SoaRefresh, rc.SoaRetry, rc.SoaExpire, rc.SoaMinttl)
+		default:
+			// Just return the target.
+			return rc.Target
+		}
 	}
 
 	// We cheat by converting to a dns.RR and use the String() function.
@@ -77,12 +88,14 @@ func (rc *RecordConfig) GetTargetDebug() string {
 	switch rc.Type { // #rtype_variations
 	case "A", "AAAA", "CNAME", "NS", "PTR", "TXT":
 		// Nothing special.
+	case "DS":
+		content += fmt.Sprintf(" ds_algorithm=%d ds_keytag=%d ds_digesttype=%d ds_digest=%s", rc.DsAlgorithm, rc.DsKeyTag, rc.DsDigestType, rc.DsDigest)
 	case "NAPTR":
 		content += fmt.Sprintf(" naptrorder=%d naptrpreference=%d naptrflags=%s naptrservice=%s naptrregexp=%s", rc.NaptrOrder, rc.NaptrPreference, rc.NaptrFlags, rc.NaptrService, rc.NaptrRegexp)
 	case "MX":
 		content += fmt.Sprintf(" pref=%d", rc.MxPreference)
 	case "SOA":
-		content = fmt.Sprintf("%s %s %s %d", rc.Type, rc.Name, rc.Target, rc.TTL)
+		content = fmt.Sprintf("%s ns=%v mbox=%v serial=%v refresh=%v retry=%v expire=%v minttl=%v", rc.Type, rc.Target, rc.SoaMbox, rc.SoaSerial, rc.SoaRefresh, rc.SoaRetry, rc.SoaExpire, rc.SoaMinttl)
 	case "SRV":
 		content += fmt.Sprintf(" srvpriority=%d srvweight=%d srvport=%d", rc.SrvPriority, rc.SrvWeight, rc.SrvPort)
 	case "SSHFP":
@@ -93,8 +106,10 @@ func (rc *RecordConfig) GetTargetDebug() string {
 		content += fmt.Sprintf(" caatag=%s caaflag=%d", rc.CaaTag, rc.CaaFlag)
 	case "R53_ALIAS":
 		content += fmt.Sprintf(" type=%s zone_id=%s", rc.R53Alias["type"], rc.R53Alias["zone_id"])
+	case "AZURE_ALIAS":
+		content += fmt.Sprintf(" type=%s", rc.AzureAlias["type"])
 	default:
-		panic(errors.Errorf("rc.String rtype %v unimplemented", rc.Type))
+		panic(fmt.Errorf("rc.String rtype %v unimplemented", rc.Type))
 		// We panic so that we quickly find any switch statements
 		// that have not been updated for a new RR type.
 	}

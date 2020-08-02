@@ -2,27 +2,29 @@ package route53
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/StackExchange/dnscontrol/models"
-	"github.com/StackExchange/dnscontrol/providers"
-	"github.com/StackExchange/dnscontrol/providers/diff"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	r53 "github.com/aws/aws-sdk-go/service/route53"
 	r53d "github.com/aws/aws-sdk-go/service/route53domains"
-	"github.com/pkg/errors"
+
+	"github.com/StackExchange/dnscontrol/v3/models"
+	"github.com/StackExchange/dnscontrol/v3/pkg/diff"
+	"github.com/StackExchange/dnscontrol/v3/providers"
 )
 
 type route53Provider struct {
-	client        *r53.Route53
-	registrar     *r53d.Route53Domains
-	delegationSet *string
-	zones         map[string]*r53.HostedZone
+	client          *r53.Route53
+	registrar       *r53d.Route53Domains
+	delegationSet   *string
+	zones           map[string]*r53.HostedZone
+	originalRecords []*r53.ResourceRecordSet
 }
 
 func newRoute53Reg(conf map[string]string) (providers.Registrar, error) {
@@ -47,9 +49,9 @@ func newRoute53(m map[string]string, metadata json.RawMessage) (*route53Provider
 	if keyID != "" || secretKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(keyID, secretKey, tokenID)
 	}
-	sess := session.New(config)
+	sess := session.Must(session.NewSession(config))
 
-	var dls *string = nil
+	var dls *string
 	if val, ok := m["DelegationSet"]; ok {
 		fmt.Printf("ROUTE53 DelegationSet %s configured\n", val)
 		dls = sPtr(val)
@@ -72,6 +74,7 @@ var features = providers.DocumentationNotes{
 	providers.CanUseTXTMulti:         providers.Can(),
 	providers.CanUseCAA:              providers.Can(),
 	providers.CanUseRoute53Alias:     providers.Can(),
+	providers.CanGetZones:            providers.Can(),
 }
 
 func init() {
@@ -88,7 +91,7 @@ func withRetry(f func() error) {
 	const maxRetries = 23
 	// TODO: exponential backoff
 	const sleepTime = 5 * time.Second
-	var currentRetry int = 0
+	var currentRetry int
 	for {
 		err := f()
 		if err == nil {
@@ -105,7 +108,16 @@ func withRetry(f func() error) {
 			return
 		}
 	}
-	return
+}
+
+// ListZones lists the zones on this account.
+func (r *route53Provider) ListZones() ([]string, error) {
+	var zones []string
+	// Assumes r.zones was filled already by newRoute53().
+	for i := range r.zones {
+		zones = append(zones, i)
+	}
+	return zones, nil
 }
 
 func (r *route53Provider) getZones() error {
@@ -160,34 +172,52 @@ func (r *route53Provider) GetNameservers(domain string) ([]*models.Nameserver, e
 	if err != nil {
 		return nil, err
 	}
-	ns := []*models.Nameserver{}
+
+	var nss []string
 	if z.DelegationSet != nil {
 		for _, nsPtr := range z.DelegationSet.NameServers {
-			ns = append(ns, &models.Nameserver{Name: *nsPtr})
+			nss = append(nss, *nsPtr)
 		}
 	}
-	return ns, nil
+	return models.ToNameservers(nss)
 }
 
-func (r *route53Provider) GetDomainCorrections(dc *models.DomainConfig) ([]*models.Correction, error) {
-	dc.Punycode()
+// GetZoneRecords gets the records of a zone and returns them in RecordConfig format.
+func (r *route53Provider) GetZoneRecords(domain string) (models.Records, error) {
 
-	var corrections = []*models.Correction{}
-	zone, ok := r.zones[dc.Name]
-	// add zone if it doesn't exist
+	zone, ok := r.zones[domain]
 	if !ok {
-		return nil, errNoExist{dc.Name}
+		return nil, errNoExist{domain}
 	}
 
 	records, err := r.fetchRecordSets(zone.Id)
 	if err != nil {
 		return nil, err
 	}
+	r.originalRecords = records
 
 	var existingRecords = []*models.RecordConfig{}
 	for _, set := range records {
-		existingRecords = append(existingRecords, nativeToRecords(set, dc.Name)...)
+		existingRecords = append(existingRecords, nativeToRecords(set, domain)...)
 	}
+	return existingRecords, nil
+}
+
+func (r *route53Provider) GetDomainCorrections(dc *models.DomainConfig) ([]*models.Correction, error) {
+	dc.Punycode()
+
+	var corrections = []*models.Correction{}
+
+	existingRecords, err := r.GetZoneRecords(dc.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	zone, ok := r.zones[dc.Name]
+	if !ok {
+		return nil, errNoExist{dc.Name}
+	}
+
 	for _, want := range dc.Records {
 		// update zone_id to current zone.id if not specified by the user
 		if want.Type == "R53_ALIAS" && want.R53Alias["zone_id"] == "" {
@@ -207,7 +237,8 @@ func (r *route53Provider) GetDomainCorrections(dc *models.DomainConfig) ([]*mode
 	}
 
 	updates := map[models.RecordKey][]*models.RecordConfig{}
-	// for each name we need to update, collect relevant records from dc
+
+	// for each name we need to update, collect relevant records from our desired domain state
 	for k := range namesToUpdate {
 		updates[k] = nil
 		for _, rc := range dc.Records {
@@ -217,19 +248,24 @@ func (r *route53Provider) GetDomainCorrections(dc *models.DomainConfig) ([]*mode
 		}
 	}
 
+	// we collect all changes into one of two categories now:
+	// pure deletions where we delete an entire record set,
+	// or changes where we upsert an entire record set.
 	dels := []*r53.Change{}
 	changes := []*r53.Change{}
-	changeDesc := ""
-	delDesc := ""
+	changeDesc := []string{}
+	delDesc := []string{}
+
 	for k, recs := range updates {
 		chg := &r53.Change{}
 		var rrset *r53.ResourceRecordSet
+		// if there are no records in our desired state for a key, then we just delete it from r53
 		if len(recs) == 0 {
 			dels = append(dels, chg)
 			chg.Action = sPtr("DELETE")
-			delDesc += strings.Join(namesToUpdate[k], "\n") + "\n"
+			delDesc = append(delDesc, strings.Join(namesToUpdate[k], "\n"))
 			// on delete just submit the original resource set we got from r53.
-			for _, r := range records {
+			for _, r := range r.originalRecords {
 				if unescape(r.Name) == k.NameFQDN && (*r.Type == k.Type || k.Type == "R53_ALIAS_"+*r.Type) {
 					rrset = r
 					break
@@ -240,7 +276,7 @@ func (r *route53Provider) GetDomainCorrections(dc *models.DomainConfig) ([]*mode
 			}
 		} else {
 			changes = append(changes, chg)
-			changeDesc += strings.Join(namesToUpdate[k], "\n") + "\n"
+			changeDesc = append(changeDesc, strings.Join(namesToUpdate[k], "\n"))
 			// on change or create, just build a new record set from our desired state
 			chg.Action = sPtr("UPSERT")
 			rrset = &r53.ResourceRecordSet{
@@ -264,14 +300,6 @@ func (r *route53Provider) GetDomainCorrections(dc *models.DomainConfig) ([]*mode
 		chg.ResourceRecordSet = rrset
 	}
 
-	changeReq := &r53.ChangeResourceRecordSetsInput{
-		ChangeBatch: &r53.ChangeBatch{Changes: changes},
-	}
-
-	delReq := &r53.ChangeResourceRecordSetsInput{
-		ChangeBatch: &r53.ChangeBatch{Changes: dels},
-	}
-
 	addCorrection := func(msg string, req *r53.ChangeResourceRecordSetsInput) {
 		corrections = append(corrections,
 			&models.Correction{
@@ -288,12 +316,40 @@ func (r *route53Provider) GetDomainCorrections(dc *models.DomainConfig) ([]*mode
 			})
 	}
 
-	if len(dels) > 0 {
-		addCorrection(delDesc, delReq)
+	getBatchSize := func(size, max int) int {
+		if size > max {
+			return max
+		}
+		return size
 	}
 
-	if len(changes) > 0 {
-		addCorrection(changeDesc, changeReq)
+	for len(dels) > 0 {
+		batchSize := getBatchSize(len(dels), 1000)
+		batch := dels[:batchSize]
+		dels = dels[batchSize:]
+		delDescBatch := delDesc[:batchSize]
+		delDesc = delDesc[batchSize:]
+
+		delDescBatchStr := "\n" + strings.Join(delDescBatch, "\n") + "\n"
+
+		delReq := &r53.ChangeResourceRecordSetsInput{
+			ChangeBatch: &r53.ChangeBatch{Changes: batch},
+		}
+		addCorrection(delDescBatchStr, delReq)
+	}
+
+	for len(changes) > 0 {
+		batchSize := getBatchSize(len(changes), 500)
+		batch := changes[:batchSize]
+		changes = changes[batchSize:]
+		changeDescBatch := changeDesc[:batchSize]
+		changeDesc = changeDesc[batchSize:]
+		changeDescBatchStr := "\n" + strings.Join(changeDescBatch, "\n") + "\n"
+
+		changeReq := &r53.ChangeResourceRecordSetsInput{
+			ChangeBatch: &r53.ChangeBatch{Changes: batch},
+		}
+		addCorrection(changeDescBatchStr, changeReq)
 	}
 
 	return corrections, nil
@@ -321,11 +377,15 @@ func nativeToRecords(set *r53.ResourceRecordSet, origin string) []*models.Record
 			switch rtype := *set.Type; rtype {
 			case "SOA":
 				continue
+			case "SPF":
+				// route53 uses a custom record type for SPF
+				rtype = "TXT"
+				fallthrough
 			default:
 				rc := &models.RecordConfig{TTL: uint32(*set.TTL)}
 				rc.SetLabelFromFQDN(unescape(set.Name), origin)
-				if err := rc.PopulateFromString(*set.Type, *rec.Value, origin); err != nil {
-					panic(errors.Wrap(err, "unparsable record received from R53"))
+				if err := rc.PopulateFromString(rtype, *rec.Value, origin); err != nil {
+					panic(fmt.Errorf("unparsable record received from R53: %w", err))
 				}
 				results = append(results, rc)
 			}

@@ -12,19 +12,26 @@ import (
 	"strings"
 	"time"
 
-	"github.com/StackExchange/dnscontrol/models"
-	"github.com/StackExchange/dnscontrol/pkg/nameservers"
-	"github.com/StackExchange/dnscontrol/pkg/notifications"
-	"github.com/xenolf/lego/acme"
-	acmelog "github.com/xenolf/lego/log"
+	"github.com/StackExchange/dnscontrol/v3/models"
+	"github.com/StackExchange/dnscontrol/v3/pkg/nameservers"
+	"github.com/StackExchange/dnscontrol/v3/pkg/notifications"
+	"github.com/go-acme/lego/certcrypto"
+	"github.com/go-acme/lego/certificate"
+	"github.com/go-acme/lego/challenge"
+	"github.com/go-acme/lego/challenge/dns01"
+	"github.com/go-acme/lego/lego"
+	acmelog "github.com/go-acme/lego/log"
 )
 
+// CertConfig describes a certificate's configuration.
 type CertConfig struct {
-	CertName string   `json:"cert_name"`
-	Names    []string `json:"names"`
-	UseECC   bool     `json:"use_ecc"`
+	CertName   string   `json:"cert_name"`
+	Names      []string `json:"names"`
+	UseECC     bool     `json:"use_ecc"`
+	MustStaple bool     `json:"must_staple"`
 }
 
+// Client is an interface for systems that issue or renew certs.
 type Client interface {
 	IssueOrRenewCert(config *CertConfig, renewUnder int, verbose bool) (bool, error)
 }
@@ -46,10 +53,13 @@ type certManager struct {
 }
 
 const (
-	LetsEncryptLive  = "https://acme-v02.api.letsencrypt.org/directory"
+	// LetsEncryptLive is the endpoint for updates (production).
+	LetsEncryptLive = "https://acme-v02.api.letsencrypt.org/directory"
+	// LetsEncryptStage is the endpoint for the staging area.
 	LetsEncryptStage = "https://acme-staging-v02.api.letsencrypt.org/directory"
 )
 
+// New is a factory for acme clients.
 func New(cfg *models.DNSConfig, directory string, email string, server string, notify notifications.Notifier) (Client, error) {
 	return commonNew(cfg, directoryStorage(directory), email, server, notify)
 }
@@ -77,6 +87,7 @@ func commonNew(cfg *models.DNSConfig, storage Storage, email string, server stri
 	return c, nil
 }
 
+// NewVault is a factory for new vaunt clients.
 func NewVault(cfg *models.DNSConfig, vaultPath string, email string, server string, notify notifications.Notifier) (Client, error) {
 	storage, err := makeVaultStorage(vaultPath)
 	if err != nil {
@@ -100,10 +111,14 @@ func (c *certManager) IssueOrRenewCert(cfg *CertConfig, renewUnder int, verbose 
 		return false, err
 	}
 
-	var client *acme.Client
+	var client *lego.Client
 
-	var action = func() (*acme.CertificateResource, error) {
-		return client.ObtainCertificate(cfg.Names, true, nil, true)
+	var action = func() (*certificate.Resource, error) {
+		return client.Certificate.Obtain(certificate.ObtainRequest{
+			Bundle:     true,
+			Domains:    cfg.Names,
+			MustStaple: cfg.MustStaple,
+		})
 	}
 
 	if existing == nil {
@@ -124,25 +139,26 @@ func (c *certManager) IssueOrRenewCert(cfg *CertConfig, renewUnder int, verbose 
 			log.Println("DNS Names don't match expected set. Reissuing.")
 		} else {
 			log.Println("Renewing cert")
-			action = func() (*acme.CertificateResource, error) {
-				return client.RenewCertificate(*existing, true, true)
+			action = func() (*certificate.Resource, error) {
+				return client.Certificate.Renew(*existing, true, cfg.MustStaple)
 			}
 		}
 	}
 
-	kt := acme.RSA2048
+	kt := certcrypto.RSA2048
 	if cfg.UseECC {
-		kt = acme.EC256
+		kt = certcrypto.EC256
 	}
-	client, err = acme.NewClient(c.acmeDirectory, c.account, kt)
+	config := lego.NewConfig(c.account)
+	config.CADirURL = c.acmeDirectory
+	config.Certificate.KeyType = kt
+	client, err = lego.NewClient(config)
 	if err != nil {
 		return false, err
 	}
-	client.ExcludeChallenges([]acme.Challenge{acme.HTTP01, acme.TLSALPN01})
-	client.SetChallengeProvider(acme.DNS01, c)
-
-	acme.PreCheckDNS = c.preCheckDNS
-	defer func() { acme.PreCheckDNS = acmePreCheck }()
+	client.Challenge.Remove(challenge.HTTP01)
+	client.Challenge.Remove(challenge.TLSALPN01)
+	client.Challenge.SetDNS01Provider(c, dns01.WrapPreCheck(c.preCheckDNS))
 
 	certResource, err := action()
 	if err != nil {
@@ -218,7 +234,7 @@ func (c *certManager) Present(domain, token, keyAuth string) (e error) {
 		d = copy
 	}
 
-	fqdn, val, _ := acme.DNS01Record(domain, keyAuth)
+	fqdn, val := dns01.GetRecord(domain, keyAuth)
 	txt := &models.RecordConfig{Type: "TXT"}
 	txt.SetTargetTXT(val)
 	txt.SetLabelFromFQDN(fqdn, d.Name)

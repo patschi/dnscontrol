@@ -6,7 +6,9 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 
-	"github.com/xenolf/lego/acme"
+	"github.com/go-acme/lego/certcrypto"
+	"github.com/go-acme/lego/lego"
+	"github.com/go-acme/lego/registration"
 )
 
 func (c *certManager) getOrCreateAccount() (*Account, error) {
@@ -35,11 +37,14 @@ func (c *certManager) createAccount(email string) (*Account, error) {
 		key:   privateKey,
 		Email: c.email,
 	}
-	client, err := acme.NewClient(c.acmeDirectory, acct, acme.EC384)
+	config := lego.NewConfig(acct)
+	config.CADirURL = c.acmeDirectory
+	config.Certificate.KeyType = certcrypto.EC384
+	client, err := lego.NewClient(config)
 	if err != nil {
 		return nil, err
 	}
-	reg, err := client.Register(true)
+	reg, err := client.Registration.Register(registration.RegisterOptions{TermsOfServiceAgreed: true})
 	if err != nil {
 		return nil, err
 	}
@@ -47,18 +52,24 @@ func (c *certManager) createAccount(email string) (*Account, error) {
 	return acct, nil
 }
 
+// Account stores the data related to an ACME account.
 type Account struct {
-	Email        string                     `json:"email"`
-	key          *ecdsa.PrivateKey          `json:"-"`
-	Registration *acme.RegistrationResource `json:"registration"`
+	Email        string                 `json:"email"`
+	Registration *registration.Resource `json:"registration"`
+	key          *ecdsa.PrivateKey
 }
 
+// GetEmail is a getter for the Email field.
 func (a *Account) GetEmail() string {
 	return a.Email
 }
+
+// GetPrivateKey is a getter for the PrivateKey field.
 func (a *Account) GetPrivateKey() crypto.PrivateKey {
 	return a.key
 }
-func (a *Account) GetRegistration() *acme.RegistrationResource {
+
+// GetRegistration is a getter for the registration field.
+func (a *Account) GetRegistration() *registration.Resource {
 	return a.Registration
 }

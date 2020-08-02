@@ -1,14 +1,10 @@
 package spflib
 
 import (
-	"fmt"
-	"strings"
-
 	"bytes"
-
+	"fmt"
 	"io"
-
-	"github.com/pkg/errors"
+	"strings"
 )
 
 // SPFRecord stores the parts of an SPF record.
@@ -48,11 +44,11 @@ var qualifiers = map[byte]bool{
 // Parse parses a raw SPF record.
 func Parse(text string, dnsres Resolver) (*SPFRecord, error) {
 	if !strings.HasPrefix(text, "v=spf1 ") {
-		return nil, errors.Errorf("Not an spf record")
+		return nil, fmt.Errorf("Not an spf record")
 	}
 	parts := strings.Split(text, " ")
 	rec := &SPFRecord{}
-	for _, part := range parts[1:] {
+	for pi, part := range parts[1:] {
 		if part == "" {
 			continue
 		}
@@ -69,9 +65,23 @@ func Parse(text string, dnsres Resolver) (*SPFRecord, error) {
 		} else if strings.HasPrefix(part, "ip4:") || strings.HasPrefix(part, "ip6:") {
 			// ip address, 0 lookups
 			continue
-		} else if strings.HasPrefix(part, "include:") {
+		} else if strings.HasPrefix(part, "include:") || strings.HasPrefix(part, "redirect=") {
+			// redirect is only partially implemented. redirect is a
+			// complex and IMHO ambiguously defined feature.  We only
+			// implement the most simple edge case: when it is the last item
+			// in the string.  In that situation, it is the equivalent of
+			// include:.
+			if strings.HasPrefix(part, "redirect=") {
+				// pi + 2: because pi starts at 0 when it iterates starting on parts[1],
+				// and because len(parts) is one bigger than the highest index.
+				if (pi + 2) != len(parts) {
+					return nil, fmt.Errorf("%s must be last item", part)
+				}
+				p.IncludeDomain = strings.TrimPrefix(part, "redirect=")
+			} else {
+				p.IncludeDomain = strings.TrimPrefix(part, "include:")
+			}
 			p.IsLookup = true
-			p.IncludeDomain = strings.TrimPrefix(part, "include:")
 			if dnsres != nil {
 				subRecord, err := dnsres.GetSPF(p.IncludeDomain)
 				if err != nil {
@@ -79,13 +89,13 @@ func Parse(text string, dnsres Resolver) (*SPFRecord, error) {
 				}
 				p.IncludeRecord, err = Parse(subRecord, dnsres)
 				if err != nil {
-					return nil, errors.Errorf("In included spf: %s", err)
+					return nil, fmt.Errorf("In included spf: %s", err)
 				}
 			}
 		} else if strings.HasPrefix(part, "exists:") || strings.HasPrefix(part, "ptr:") {
 			p.IsLookup = true
 		} else {
-			return nil, errors.Errorf("Unsupported spf part %s", part)
+			return nil, fmt.Errorf("Unsupported spf part %s", part)
 		}
 
 	}

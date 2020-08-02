@@ -1,13 +1,14 @@
 package acme
 
 import (
+	"crypto/ecdsa"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"strings"
 
-	"github.com/xenolf/lego/acme"
+	"github.com/go-acme/lego/certificate"
 
 	"github.com/hashicorp/vault/api"
 )
@@ -32,7 +33,9 @@ func makeVaultStorage(vaultPath string) (Storage, error) {
 	return storage, nil
 }
 
-func (v *vaultStorage) GetCertificate(name string) (*acme.CertificateResource, error) {
+func (v *vaultStorage) GetCertificate(name string) (*certificate.Resource, error) {
+	var err error
+
 	path := v.certPath(name)
 	secret, err := v.client.Read(path)
 	if err != nil {
@@ -41,24 +44,23 @@ func (v *vaultStorage) GetCertificate(name string) (*acme.CertificateResource, e
 	if secret == nil {
 		return nil, nil
 	}
-	cert := &acme.CertificateResource{}
+	cert := &certificate.Resource{}
 	if dat, err := v.getString("meta", secret.Data, path); err != nil {
 		return nil, err
 	} else if err = json.Unmarshal(dat, cert); err != nil {
 		return nil, err
 	}
 
-	if dat, err := v.getString("tls.cert", secret.Data, path); err != nil {
+	var dat []byte
+	if dat, err = v.getString("tls.cert", secret.Data, path); err != nil {
 		return nil, err
-	} else {
-		cert.Certificate = dat
 	}
+	cert.Certificate = dat
 
-	if dat, err := v.getString("tls.key", secret.Data, path); err != nil {
+	if dat, err = v.getString("tls.key", secret.Data, path); err != nil {
 		return nil, err
-	} else {
-		cert.PrivateKey = dat
 	}
+	cert.PrivateKey = dat
 
 	return cert, nil
 }
@@ -75,7 +77,7 @@ func (v *vaultStorage) getString(key string, data map[string]interface{}, path s
 	return []byte(str), nil
 }
 
-func (v *vaultStorage) StoreCertificate(name string, cert *acme.CertificateResource) error {
+func (v *vaultStorage) StoreCertificate(name string, cert *certificate.Resource) error {
 	jDat, err := json.MarshalIndent(cert, "", "  ")
 	if err != nil {
 		return err
@@ -116,16 +118,17 @@ func (v *vaultStorage) GetAccount(acmeHost string) (*Account, error) {
 		return nil, err
 	}
 
-	if dat, err := v.getString("tls.key", secret.Data, path); err != nil {
+	var key *ecdsa.PrivateKey
+	var dat []byte
+	var block *pem.Block
+	if dat, err = v.getString("tls.key", secret.Data, path); err != nil {
 		return nil, err
-	} else if block, _ := pem.Decode(dat); block == nil {
+	} else if block, _ = pem.Decode(dat); block == nil {
 		return nil, fmt.Errorf("Error decoding account private key")
-	} else if key, err := x509.ParseECPrivateKey(block.Bytes); err != nil {
+	} else if key, err = x509.ParseECPrivateKey(block.Bytes); err != nil {
 		return nil, err
-	} else {
-		acct.key = key
 	}
-
+	acct.key = key
 	return acct, nil
 }
 

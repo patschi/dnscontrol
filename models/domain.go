@@ -17,11 +17,12 @@ type DomainConfig struct {
 	Nameservers   []*Nameserver     `json:"nameservers,omitempty"`
 	KeepUnknown   bool              `json:"keepunknown,omitempty"`
 	IgnoredLabels []string          `json:"ignored_labels,omitempty"`
+	AutoDNSSEC    bool              `json:"auto_dnssec,omitempty"`
 	//DNSSEC        bool              `json:"dnssec,omitempty"`
 
 	// These fields contain instantiated provider instances once everything is linked up.
 	// This linking is in two phases:
-	// 1. Metadata (name/type) is availible just from the dnsconfig. Validation can use that.
+	// 1. Metadata (name/type) is available just from the dnsconfig. Validation can use that.
 	// 2. Final driver instances are loaded after we load credentials. Any actual provider interaction requires that.
 	RegistrarInstance    *RegistrarInstance     `json:"-"`
 	DNSProviderInstances []*DNSProviderInstance `json:"-"`
@@ -45,16 +46,6 @@ func (dc *DomainConfig) Copy() (*DomainConfig, error) {
 	dc.DNSProviderInstances = dnsps
 	newDc.DNSProviderInstances = dnsps
 	return newDc, err
-}
-
-// HasRecordTypeName returns True if there is a record with this rtype and name.
-func (dc *DomainConfig) HasRecordTypeName(rtype, name string) bool {
-	for _, r := range dc.Records {
-		if r.Type == rtype && r.GetLabel() == name {
-			return true
-		}
-	}
-	return false
 }
 
 // Filter removes all records that don't match the filter f.
@@ -88,7 +79,7 @@ func (dc *DomainConfig) Punycode() error {
 			if err != nil {
 				return err
 			}
-		case "A", "AAAA", "CAA", "NAPTR", "SSHFP", "TXT", "TLSA":
+		case "A", "AAAA", "CAA", "DS", "NAPTR", "SOA", "SSHFP", "TXT", "TLSA", "AZURE_ALIAS":
 			// Nothing to do.
 		default:
 			msg := fmt.Sprintf("Punycode rtype %v unimplemented", rec.Type)

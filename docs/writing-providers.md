@@ -91,18 +91,24 @@ yourself.)
 Pick a similar provider as your base.  Providers basically fall
 into three general categories:
 
-* **zone:** The API requires you to upload the entire zone every time. (BIND, GANDI).
-* **incremental-record:** The API lets you add/change/delete individual DNS records. (ACTIVEDIR, CLOUDFLARE, NAMEDOTCOM, GCLOUD, ROUTE53)
-* **incremental-label:** Similar to incremental, but the API requires you to update all the records related to a particular label each time. For example, if a label (www.example.com) has an A and MX record, any change requires replacing all the records for that label.
+* **zone:** The API requires you to upload the entire zone every time. (BIND).
+* **incremental-record:** The API lets you add/change/delete individual DNS records. (ACTIVEDIR, CLOUDFLARE, DNSIMPLE, NAMEDOTCOM, GCLOUD, ROUTE53)
+* **incremental-label:** Like incremental-record, but if there are
+  multiple records on a label (for example, example www.example.com
+has A and MX records), you have to replace all the records at that
+label. (GANDI_V5)
+* **incremental-label-type:** Like incremental-record, but updates to any records at a label have to be done by type.  For example, if a label (www.example.com) has many A and MX records, even the smallest change to one of the A records requires replacing all the A records. Any changes to the MX records requires replacing all the MX records.  If an A record is converted to a CNAME, one must remove all the A records in one call, and add the CNAME record with another call.  This is deceptively difficult to get right; if you have the voice between incremental-label-type and incremental-label, pick incremental-label. (DESEC)
 
-TODO: Categorize DNSIMPLE, NAMECHEAP
+TODO: Categorize NAMECHEAP
 
 All providers use the "diff" module to detect differences. It takes
 two zones and returns records that are unchanged, created, deleted,
-and modified. The incremental providers use the differences to
-update individual records or recordsets. The zone providers use the
+and modified.
+The zone providers use the
 information to print a human-readable list of what is being changed,
 but upload the entire new zone.
+The incremental providers use the differences to
+update individual records or recordsets.
 
 
 ## Step 3: Create the driver skeleton
@@ -119,7 +125,7 @@ The API abstraction is usually in a separate file (often called
 ## Step 4: Activate the driver
 
 Edit
-[providers/_all/all.go](https://github.com/StackExchange/dnscontrol/blob/master/providers/_all/all.go).
+[providers/\_all/all.go](https://github.com/StackExchange/dnscontrol/blob/master/providers/_all/all.go).
 Add the provider list so DNSControl knows it exists.
 
 ## Step 5: Implement
@@ -162,7 +168,7 @@ This will run the tests on Amazon AWS Route53:
 
 ```
 export R53_DOMAIN=dnscontroltest-r53.com  # Use a test domain.
-export R53_KEY_ID=CHANGE_TO_THE_ID
+export R53_KEY_ID='CHANGE_TO_THE_ID'
 export R53_KEY='CHANGE_TO_THE_KEY'
 go test -v -verbose -provider ROUTE53
 ```
@@ -217,11 +223,65 @@ FYI: If a provider's capabilities changes, run `go generate` to update
 the documentation.
 
 
-## Vendoring Dependencies
+## Step 11: Clean up
 
-If your provider depends on other go packages, then you must vendor them. To do this, use [govendor](https://github.com/kardianos/govendor).  A command like this is usually sufficient:
+Run "go vet" and "golint" and clean up any errors found.
 
 ```
-go get github.com/kardianos/govendor
-govendor add +e
+go vet
+golint
 ```
+
+Please use `go vet` from the [newest releaes of Go](https://golang.org/doc/devel/release.html#policy).
+
+If [golint](https://github.com/golang/lint) isn't installed on your machine:
+
+```
+go get -u golang.org/x/lint/golint
+```
+
+
+## Step 12: Vendor Dependencies
+
+The build process for DNSControl uses the default Go Modules system,
+which ignores the `vendor` directory. However we store a backup copy
+of all dependencies by using the `go mod vendor` command.  It makes
+our repo larger, but makes Tom feel better because he's been burnt by
+modules disappearing on him.
+
+What this means:
+
+1. If you require a Go dependency, get it using `go get -u`.  For
+   example:
+
+```
+go get -u github.com/aws/aws-sdk-go
+```
+
+2. Before you send any PRs, please make sure the dependencies are
+   vendored.  Use these commands:
+
+```
+go mod vendor
+go mod tidy
+```
+
+See
+[docs/release-engineering.md](https://github.com/StackExchange/dnscontrol/blob/master/docs/release-engineering.md)
+for tips about managing modules and checking for outdated
+dependencies.
+
+
+## Step 13: Check your work.
+
+Here are some last-minute things to check before you submit your PR.
+
+1. Run "go generate" to make sure all generated files are fresh.
+2. Make sure all appropriate documentation is current. (See Step 8)
+3. Check that dependencies are vendored (See Step 12)
+4. Re-run the integration test one last time (See Step 7)
+
+## Step 14: After the PR is merged
+
+1. Remove the "provider-request" label from the PR.
+2. Verify that [docs/provider-list.md](https://github.com/StackExchange/dnscontrol/blob/master/docs/provider-list.md) no longer shows the provider as "requested"

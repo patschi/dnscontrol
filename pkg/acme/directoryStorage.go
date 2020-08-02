@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/xenolf/lego/acme"
+	"github.com/go-acme/lego/certificate"
 )
 
 // directoryStorage implements storage in a local file directory
@@ -34,11 +34,10 @@ func (d directoryStorage) accountKeyFile(acmeHost string) string {
 	return filepath.Join(d.accountDirectory(acmeHost), "account.key")
 }
 
-// TODO: probably lock these down more
-const perms os.FileMode = 0644
+const perms os.FileMode = 0600
 const dirPerms os.FileMode = 0700
 
-func (d directoryStorage) GetCertificate(name string) (*acme.CertificateResource, error) {
+func (d directoryStorage) GetCertificate(name string) (*certificate.Resource, error) {
 	f, err := os.Open(d.certFile(name, "json"))
 	if err != nil && os.IsNotExist(err) {
 		// if json does not exist, nothing does
@@ -49,7 +48,7 @@ func (d directoryStorage) GetCertificate(name string) (*acme.CertificateResource
 	}
 	defer f.Close()
 	dec := json.NewDecoder(f)
-	cr := &acme.CertificateResource{}
+	cr := &certificate.Resource{}
 	if err = dec.Decode(cr); err != nil {
 		return nil, err
 	}
@@ -62,7 +61,7 @@ func (d directoryStorage) GetCertificate(name string) (*acme.CertificateResource
 	return cr, nil
 }
 
-func (d directoryStorage) StoreCertificate(name string, cert *acme.CertificateResource) error {
+func (d directoryStorage) StoreCertificate(name string, cert *certificate.Resource) error {
 	// make sure actual cert data never gets into metadata json
 	if err := os.MkdirAll(d.certDir(name), dirPerms); err != nil {
 		return err
@@ -71,6 +70,7 @@ func (d directoryStorage) StoreCertificate(name string, cert *acme.CertificateRe
 	cert.Certificate = nil
 	priv := cert.PrivateKey
 	cert.PrivateKey = nil
+	combined := []byte(string(pub) + "\n" + string(priv))
 	jDAt, err := json.MarshalIndent(cert, "", "  ")
 	if err != nil {
 		return err
@@ -79,6 +79,9 @@ func (d directoryStorage) StoreCertificate(name string, cert *acme.CertificateRe
 		return err
 	}
 	if err = ioutil.WriteFile(d.certFile(name, "crt"), pub, perms); err != nil {
+		return err
+	}
+	if err = ioutil.WriteFile(d.certFile(name, "pem"), combined, perms); err != nil {
 		return err
 	}
 	return ioutil.WriteFile(d.certFile(name, "key"), priv, perms)

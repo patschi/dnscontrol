@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/StackExchange/dnscontrol/models"
+	"github.com/StackExchange/dnscontrol/v3/models"
 	"github.com/namedotcom/go/namecom"
 )
 
@@ -28,7 +28,7 @@ func (n *NameCom) GetNameservers(domain string) ([]*models.Nameserver, error) {
 			toUse[idx] = matches[0]
 		}
 	}
-	return models.StringsToNameservers(toUse), nil
+	return models.ToNameservers(toUse)
 }
 
 func (n *NameCom) getNameserversRaw(domain string) ([]string, error) {
