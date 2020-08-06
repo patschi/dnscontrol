@@ -28,6 +28,7 @@ var features = providers.DocumentationNotes{
 	providers.DocDualHost:            providers.Can(),
 	providers.DocOfficiallySupported: providers.Cannot(),
 	providers.CanGetZones:            providers.Can(),
+	providers.CanAutoDNSSEC:          providers.Can(),
 }
 
 func newOVH(m map[string]string, metadata json.RawMessage) (*ovhProvider, error) {
@@ -102,8 +103,18 @@ func (c *ovhProvider) GetZoneRecords(domain string) (models.Records, error) {
 }
 
 func (c *ovhProvider) GetDomainCorrections(dc *models.DomainConfig) ([]*models.Correction, error) {
-	dc.Punycode()
+	if err := dc.Punycode(); err != nil {
+		panic(fmt.Errorf("Could not convert domain to punycode: %s", dc.Name))
+	}
 	//dc.CombineMXs()
+
+	corrections := []*models.Correction{}
+
+	dnssecFixes, err := c.getDnssecCorrections(dc)
+	if err != nil {
+		return nil, err
+	}
+	corrections = append(corrections, dnssecFixes...)
 
 	actual, err := c.GetZoneRecords(dc.Name)
 	if err != nil {
@@ -115,8 +126,6 @@ func (c *ovhProvider) GetDomainCorrections(dc *models.DomainConfig) ([]*models.C
 
 	differ := diff.New(dc)
 	_, create, delete, modify := differ.IncrementalDiff(actual)
-
-	corrections := []*models.Correction{}
 
 	for _, del := range delete {
 		rec := del.Existing.Original.(*Record)
@@ -153,6 +162,35 @@ func (c *ovhProvider) GetDomainCorrections(dc *models.DomainConfig) ([]*models.C
 	}
 
 	return corrections, nil
+}
+
+// getDnssecCorrections returns corrections that update a domain's DNSSEC state.
+// Most of the logic silently and shamelessly stolen from dnsimpleProvider.go.
+func (c *ovhProvider) getDnssecCorrections(dc *models.DomainConfig) ([]*models.Correction, error) {
+	enabled, err := c.getDnssecState(dc.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	if enabled && !dc.AutoDNSSEC {
+		return []*models.Correction{
+			{
+				Msg: "Disable DNSSEC",
+				F:   func() error { err := c.disableDnssec(dc.Name); return err },
+			},
+		}, nil
+	}
+
+	if !enabled && dc.AutoDNSSEC {
+		return []*models.Correction{
+			{
+				Msg: "Enable DNSSEC",
+				F:   func() error { err := c.enableDnssec(dc.Name); return err },
+			},
+		}, nil
+	}
+
+	return []*models.Correction{}, nil
 }
 
 func nativeToRecord(r *Record, origin string) *models.RecordConfig {

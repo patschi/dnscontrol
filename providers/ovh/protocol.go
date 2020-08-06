@@ -161,6 +161,33 @@ func (c *ovhProvider) isDKIMRecord(rc *models.RecordConfig) bool {
 	return (rc != nil && rc.Type == "TXT" && strings.Contains(rc.GetLabel(), "._domainkey"))
 }
 
+func (c *ovhProvider) getDnssecState(fqdn string) (bool, error) {
+	type dnssecStatus struct {
+		status   string `json:"status,omitempty"`
+	}
+	var response dnssecStatus;
+	err := c.client.CallAPI("GET", fmt.Sprintf("/domain/zone/%s/dnssec", fqdn), nil, &response, true)
+	if err != nil {
+		err = fmt.Errorf("Error when checking Dnssec State: %s", err.Error())
+		return false, err
+	}
+
+	if response.status == "enabled" || response.status == "enableInProgress" {
+		// If Dnssec is "enableInProgress" we still consider it being enabled to prevent dnscontrol to
+		// enable it over and over again while OVH is doing its creepy stuff behind the scenes.
+		return true, nil
+	}
+	return false, nil;
+}
+
+func (c *ovhProvider) enableDnssec(fqdn string) error {
+	return c.client.CallAPI("POST", fmt.Sprintf("/domain/zone/%s/dnssec", fqdn), nil, &Void{}, true)
+}
+
+func (c *ovhProvider) disableDnssec(fqdn string) error {
+	return c.client.CallAPI("DELETE", fmt.Sprintf("/domain/zone/%s/dnssec", fqdn), nil, &Void{}, true)
+}
+
 func (c *ovhProvider) refreshZone(fqdn string) error {
 	return c.client.CallAPI("POST", fmt.Sprintf("/domain/zone/%s/refresh", fqdn), nil, &Void{}, true)
 }
