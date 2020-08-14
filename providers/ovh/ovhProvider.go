@@ -25,7 +25,7 @@ var features = providers.DocumentationNotes{
 	providers.CanUseTLSA:             providers.Can(),
 	providers.CanUseSSHFP:            providers.Can(),
 	providers.DocCreateDomains:       providers.Cannot("New domains require registration"),
-	providers.DocDualHost:            providers.Can(),
+	providers.DocDualHost:            providers.Cannot("Changing NS records of zone is not possible."),
 	providers.DocOfficiallySupported: providers.Cannot(),
 	providers.CanGetZones:            providers.Can(),
 	providers.CanAutoDNSSEC:          providers.Can(),
