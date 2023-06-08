@@ -74,6 +74,10 @@ func init() {
 		RecordAuditor: AuditRecords,
 	}
 	providers.RegisterDomainServiceProviderType("INWX", fns, features)
+
+	providers.RegisterCustomRecordType("URL", "INWX", "")
+	providers.RegisterCustomRecordType("URL301", "INWX", "")
+	providers.RegisterCustomRecordType("FRAME", "INWX", "")
 }
 
 // getOTP either returns the TOTPValue or uses TOTPKey and the current time to generate a valid TOTPValue.
@@ -186,6 +190,15 @@ func makeNameserverRecordRequest(domain string, rec *models.RecordConfig) *goinw
 	case "SRV":
 		req.Priority = int(rec.SrvPriority)
 		req.Content = fmt.Sprintf("%d %d %v", rec.SrvWeight, rec.SrvPort, content[:len(content)-1])
+	case "URL":
+		req.URLRedirectType = "HEADER302"
+	case "URL301":
+		req.Type = "URL"
+		req.URLRedirectType = "HEADER301"
+	case "FRAME":
+		req.Type = "URL"
+		req.URLRedirectType = "FRAME"
+		req.URLRedirectTitle = "Redirect"
 	default:
 		req.Content = rec.GetTargetCombined()
 	}
