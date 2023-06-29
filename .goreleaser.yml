@@ -47,7 +47,7 @@ universal_binaries:
     id: build
 
 nfpms:
-  - file_name_template: '{{ .ProjectName }}-{{ .Version }}.{{ .Arch }}'
+  - file_name_template: '{{ .ConventionalFileName }}'
     id: packages_rpm
     homepage:  https://docs.dnscontrol.org/
     description: "DNSControl: Infrastructure as Code for DNS Zones"
@@ -55,10 +55,7 @@ nfpms:
     license: MIT
     formats:
     - rpm
-    replacements:
-      386: i386
-      amd64: x86_64
-  - file_name_template: '{{ .ProjectName }}-{{ .Version }}.{{ .Arch }}'
+  - file_name_template: '{{ .ConventionalFileName }}'
     id: packages_deb
     homepage:  https://docs.dnscontrol.org/
     description: "DNSControl: Infrastructure as Code for DNS Zones"
@@ -66,8 +63,6 @@ nfpms:
     license: MIT
     formats:
     - deb
-    replacements:
-      386: i386
 dockers:
   - image_templates:
     - &amd_image "stackexchange/{{.ProjectName}}:{{ .Version }}-amd64"
