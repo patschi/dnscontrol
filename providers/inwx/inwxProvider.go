@@ -272,8 +272,11 @@ func (api *inwxAPI) deleteRecord(RecordID string) error {
 
 // isNullMX checks if a record is a null MX record.
 func isNullMX(rec *models.RecordConfig) bool {
+	if rec.Type != "MX" {
+		return false
+	}
 	f := rec.AsMX()
-	return rec.Type == "MX" && f.Preference == 0 && f.Mx == "."
+	return f.Preference == 0 && f.Mx == "."
 }
 
 // AutoDnssecToggle enables and disables AutoDNSSEC for INWX domains.
